@@ -1,28 +1,158 @@
-"""CLI interface for toad project.
+import importlib.util
+import subprocess
+from functools import lru_cache
+from pathlib import Path
+from typing import Any, Callable
 
-Be creative! do whatever you want!
+import typer
+from jinja2 import Template as Jinja2Template
+from models import Entry, Task, TaskStatus, Template
+from sqlmodel import Session, SQLModel, create_engine, select
+from sqlmodel.engine.result import ScalarResult
+from sqlalchemy.future.engine import Engine
+from typing_extensions import Annotated
 
-- Install click or typer and create a CLI app
-- Use builtin argparse
-- Start a web application
-- Import things from your .base module
-"""
+app = typer.Typer()
 
 
-def main():  # pragma: no cover
+def create_database(db: str) -> Engine:
     """
-    The main function executes on commands:
-    `python -m toad` and `$ toad `.
+    Create the database and tables.
 
-    This is your program's entry point.
+    Args:
+        db: The SQLlite db path
+    Returns:
+        The db Engine
 
-    You can change this function to do whatever you want.
-    Examples:
-        * Run a test suite
-        * Run a server
-        * Do some other stuff
-        * Run a command line application (Click, Typer, ArgParse)
-        * List all available tasks
-        * Run an application (Flask, FastAPI, Django, etc.)
     """
-    print("This will do something")
+    engine: Engine = create_engine(f"sqlite:///{db}")
+    SQLModel.metadata.create_all(engine)
+    return engine
+
+
+def _import_script(script_file: str, method_name: str):
+    script_path = Path(script_file).resolve()
+
+    if script_path.exists():
+        module_name = script_path.stem
+        spec: Any = importlib.util.spec_from_file_location(module_name, script_path)
+        external_module: Any = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(external_module)
+
+        method = getattr(external_module, method_name, None)
+        if callable(method):
+            return method
+        else:
+            print("The specified script does not contain a callable function.")
+    else:
+        print("The specified script file does not exist.")
+
+
+@lru_cache
+def _load_template(template_string: str) -> Template:
+    return Jinja2Template(template_string)
+
+
+@app.command()
+def update_template(database: str, template: str):
+    engine = create_database(database)
+    with Session(engine) as session:
+        with open(template, "r") as tfile:
+            query = session.exec(
+                select(Template).where(Template.name == Path(template).name)
+            )
+            db_template = query.one()
+            db_template.content = tfile.read()
+            session.add(db_template)
+            session.commit()
+            print("Done")
+            session.refresh(db_template)
+            print(db_template.content)
+
+
+@app.command()
+def run(database: str):
+    engine = create_database(database)
+    with Session(engine) as session:
+        tasks: ScalarResult[Task] = session.exec(select(Task))
+        for task in tasks:
+            jinja_template = _load_template(task.template.content)
+            run_return = subprocess.run(
+                jinja_template.render(entry=task.entry), shell=True
+            )
+            if run_return.returncode == 0:
+                task.status = TaskStatus.RUNNING
+            else:
+                task.status = TaskStatus.ERROR
+            task.task_launch_exitcode = run_return.returncode
+            task.task_launch_stdout = run_return.stdout
+            task.task_launch_stderr = run_return.stderr
+            session.add(task)
+            session.commit()
+
+
+@app.command(help="Run the check script on the running tasks.")
+def check(
+    database: str,
+    check_script: Annotated[
+        str, typer.Option(help="Python script to check if tasks were completed.")
+    ],
+):
+    engine = create_database(database)
+    check_method: Callable = _import_script(check_script, method_name="check")
+
+    with Session(engine) as session:
+        tasks: ScalarResult[Task] = session.exec(
+            select(Task).where(Task.status == TaskStatus.RUNNING)
+        )
+        for task in tasks:
+            is_running, exit_code, stdout, stderr = check_method(
+                task.entry.name,
+                task.task_launch_exitcode,
+                task.task_launch_stdout,
+                task.task_launch_stderr,
+            )
+            if is_running:
+                continue
+            if exit_code == 0:
+                task.status = TaskStatus.COMPLETED
+            else:
+                task.status = TaskStatus.ERROR
+            task.task_execution_exitcode = exit_code
+            task.task_execution_stdout = stdout
+            task.task_execution_stderr = stderr
+            session.add(task)
+            session.commit()
+
+
+@app.command(help="Initialize the database and the template and entries.")
+def init(
+    database: str,
+    template: Annotated[str, typer.Option(help="Path to the jijna2 template.")],
+    entries: Annotated[list[str], typer.Option(help="The entries to store in the DB.")],
+):
+    engine = create_database(database)
+
+    with Session(engine) as session:
+        db_template = None
+        with open(template, "r") as tfile:
+            db_template = Template(name=Path(template).name, content=tfile.read())
+            session.add(db_template)
+            session.commit()
+            session.refresh(db_template)
+
+        for entry in entries:
+            entry = entry.strip()
+
+            db_entry = Entry(name=entry)
+            session.add(db_entry)
+            session.commit()
+            session.refresh(db_entry)
+
+            task = Task(entry_id=db_entry.id, template_id=db_template.id)
+            session.add(task)
+            session.commit()
+
+
+if __name__ == "__main__":
+    app()
