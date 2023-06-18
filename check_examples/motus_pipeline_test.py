@@ -8,14 +8,13 @@ def is_running(text):
     match = re.search(pattern, text)
     if match:
         job_id = match.group(1)
-        command = f"bjobs -l {job_id}"
+        command = f"bjobs -o 'stat' {job_id}"
         try:
-            output = subprocess.check_output(
-                command, shell=True, text=True, stderr=subprocess.DEVNULL
-            )
-            lines = output.strip().split("\n")
-            status_line = next(line for line in lines if line.startswith("Status"))
-            status = status_line.split(":")[1].strip()
+            output = subprocess.check_output(command, shell=True, stderr=subprocess.DEVNULL)
+            output_text = output.decode("utf-8")
+            _, status = output_text.strip().split('\n')
+            if not status:
+                return False
             return status in ["RUN", "PEND"]
         except subprocess.CalledProcessError:
             return False

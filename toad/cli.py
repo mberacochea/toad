@@ -74,7 +74,9 @@ def update_template(database: str, template: str):
 def run(database: str, batch_size: int = 10):
     engine = create_database(database)
     with Session(engine) as session:
-        tasks: ScalarResult[Task] = session.exec(select(Task).limit(batch_size))
+        tasks: ScalarResult[Task] = session.exec(
+            select(Task).where(Task.status == TaskStatus.PENDING).limit(batch_size)
+        )
         for task in tasks:
             jinja_template = _load_template(task.template.content)
             run_return = subprocess.run(
