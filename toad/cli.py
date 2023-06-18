@@ -6,7 +6,7 @@ from typing import Any, Callable
 
 import typer
 from jinja2 import Template as Jinja2Template
-from models import Entry, Task, TaskStatus, Template
+from toad.models import Entry, Task, TaskStatus, Template
 from sqlmodel import Session, SQLModel, create_engine, select
 from sqlmodel.engine.result import ScalarResult
 from sqlalchemy.future.engine import Engine
@@ -71,14 +71,18 @@ def update_template(database: str, template: str):
 
 
 @app.command()
-def run(database: str):
+def run(database: str, batch_size: int = 10):
     engine = create_database(database)
     with Session(engine) as session:
-        tasks: ScalarResult[Task] = session.exec(select(Task))
+        tasks: ScalarResult[Task] = session.exec(select(Task).limit(batch_size))
         for task in tasks:
             jinja_template = _load_template(task.template.content)
             run_return = subprocess.run(
-                jinja_template.render(entry=task.entry), shell=True
+                jinja_template.render(entry=task.entry),
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
             )
             if run_return.returncode == 0:
                 task.status = TaskStatus.RUNNING
@@ -125,12 +129,35 @@ def check(
             session.commit()
 
 
-@app.command(help="Initialize the database and the template and entries.")
+def add_entries():
+    pass
+
+
+def remove_entries():
+    pass
+
+
+def update_entries():
+    pass
+
+
+def empty_list() -> list:
+    return []
+
+
+@app.command(help="Add entries to the, template and entries.")
 def init(
     database: str,
     template: Annotated[str, typer.Option(help="Path to the jijna2 template.")],
-    entries: Annotated[list[str], typer.Option(help="The entries to store in the DB.")],
+    entries: Annotated[
+        list[str],
+        typer.Option(
+            default_factory=empty_list, help="The entries to store in the DB."
+        ),
+    ],
+    entries_file: Annotated[str, typer.Option(help="A file with one entry per line.")],
 ):
+    # TODO: template and entries should be optional
     engine = create_database(database)
 
     with Session(engine) as session:
@@ -140,6 +167,13 @@ def init(
             session.add(db_template)
             session.commit()
             session.refresh(db_template)
+
+        if entries_file and Path(entries_file).exists():
+            with open(entries_file, "r") as efiles:
+                for line_entry in efiles:
+                    line_entry = line_entry.strip()
+                    if line_entry:
+                        entries.append(line_entry.strip())
 
         for entry in entries:
             entry = entry.strip()
