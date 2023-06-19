@@ -69,7 +69,7 @@ toad run toad_test.db [--batch-size]
 
 ### Check script
 
-In order to check the status of the jobs the user needs to provide a python script to do it. The signature of the method is:
+In order to check the status of the jobs, the user needs to provide a python script to do it. The script needs to have a method with the following name and signature:
 
 ```python
 def check(entry_name: str, launch_exitcode: str, launch_stdout: str, launch_stderr: str):
