@@ -1,12 +1,9 @@
-import importlib.util
-import subprocess
+import time
 from enum import Enum
-from functools import lru_cache
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 
 import typer
-from jinja2 import Template as Jinja2Template
 from rich.console import Console
 from rich.table import Table
 from sqlalchemy.future.engine import Engine
@@ -14,6 +11,7 @@ from sqlmodel import Session, SQLModel, create_engine, func, select
 from sqlmodel.engine.result import ScalarResult
 from typing_extensions import Annotated
 
+from toad.importer import import_script
 from toad.models import Entry, Task, TaskStatus, Template
 
 app = typer.Typer()
@@ -32,29 +30,6 @@ def create_database(db: str) -> Engine:
     engine: Engine = create_engine(f"sqlite:///{db}")
     SQLModel.metadata.create_all(engine)
     return engine
-
-
-def _import_script(script_file: str, method_name: str):
-    script_path = Path(script_file).resolve()
-
-    if script_path.exists():
-        module_name = script_path.stem
-        spec: Any = importlib.util.spec_from_file_location(module_name, script_path)
-        external_module: Any = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(external_module)
-
-        method = getattr(external_module, method_name, None)
-        if callable(method):
-            return method
-        else:
-            print("The specified script does not contain a callable function.")
-    else:
-        print("The specified script file does not exist.")
-
-
-@lru_cache
-def _load_template(template_string: str) -> Template:
-    return Jinja2Template(template_string)
 
 
 @app.command()
@@ -82,21 +57,7 @@ def run(database: str, batch_size: int = 10):
             select(Task).where(Task.status == TaskStatus.PENDING).limit(batch_size)
         )
         for task in tasks:
-            jinja_template = _load_template(task.template.content)
-            run_return = subprocess.run(
-                jinja_template.render(entry=task.entry),
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-            if run_return.returncode == 0:
-                task.status = TaskStatus.RUNNING
-            else:
-                task.status = TaskStatus.ERROR
-            task.task_launch_exitcode = run_return.returncode
-            task.task_launch_stdout = run_return.stdout
-            task.task_launch_stderr = run_return.stderr
+            task.run()
             session.add(task)
             session.commit()
 
@@ -109,7 +70,7 @@ def check(
     ],
 ):
     engine = create_database(database)
-    check_method: Callable = _import_script(check_script, method_name="check")
+    check_method: Callable = import_script(check_script, method_name="check")
 
     with Session(engine) as session:
         tasks: ScalarResult[Task] = session.exec(
@@ -161,6 +122,69 @@ def summary(database: str, format: SummaryType = SummaryType.table):
         else:
             for status, count in result:
                 print(f"{status}\t{count}")
+
+
+@app.command(
+    help=(
+        "Run continuously, checking running jobs "
+        "and triggering new ones until there are no more pending tasks."
+    )
+)
+def daemon(database: str, max_jobs: int, check_script: str, minutes: int = 30):
+    engine = create_database(database)
+    while True:
+        print("Starting.")
+        print("Checking any running tasks.")
+        # Update the running jobs #
+        check(database, check_script)
+
+        with Session(engine) as session:
+            # Get the number of currently running tasks
+            # FIXME: use a count
+            running_count: int = len(
+                session.exec(
+                    select(Task).where(Task.status == TaskStatus.RUNNING)
+                ).all()
+            )
+
+            assert running_count >= 0
+
+            print(f"There are {running_count} tasks running.")
+
+            # Calculate the number of available slots for new jobs
+            available_slots = max_jobs - running_count
+
+            if available_slots > 0:
+                print(f"There is room for {available_slots} more.")
+
+                pending_tasks: list[Task] = session.exec(
+                    select(Task)
+                    .where(Task.status == TaskStatus.PENDING)
+                    .limit(available_slots)
+                )
+
+                for pending_task in pending_tasks:
+                    pending_task.run()
+                    session.add(pending_task)
+                    print(f"Task for {pending_task.entry.name} running.")
+                session.commit()
+
+                # Get the count of remaining pending tasks
+                # FIXME: use a count
+                pending_count = len(
+                    session.exec(
+                        select(Task).where(Task.status == TaskStatus.PENDING)
+                    ).all()
+                )
+
+                assert pending_count >= 0
+
+                # Exit if there are no more pending tasks
+                if pending_count == 0:
+                    print("No more tasks to run.")
+                    break
+
+        time.sleep(60 * minutes)  # Sleep for {minutes}
 
 
 def empty_list() -> list:

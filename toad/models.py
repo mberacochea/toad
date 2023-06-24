@@ -1,7 +1,10 @@
+import subprocess
 from datetime import datetime
 from enum import Enum
+from functools import lru_cache
 from typing import Optional
 
+from jinja2 import Template as Jinja2Template
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -39,6 +42,11 @@ class TaskStatus(str, Enum):
     ERROR = "error"
 
 
+@lru_cache
+def load_template(template_string: str) -> Jinja2Template:
+    return Jinja2Template(template_string)
+
+
 class Task(TimeStampedMixin, table=True):
     """This model represents the exeuction of an Entry with a given Tempalte"""
 
@@ -58,3 +66,20 @@ class Task(TimeStampedMixin, table=True):
     task_execution_exitcode: int = Field(nullable=True)
     task_execution_stdout: str = Field(nullable=True)
     task_execution_stderr: str = Field(nullable=True)
+
+    def run(self):
+        task_template = load_template(self.template.content)
+        run_return = subprocess.run(
+            task_template.render(entry=self.entry),
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if run_return.returncode == 0:
+            self.status = TaskStatus.RUNNING
+        else:
+            self.status = TaskStatus.ERROR
+        self.task_launch_exitcode = run_return.returncode
+        self.task_launch_stdout = run_return.stdout
+        self.task_launch_stderr = run_return.stderr
