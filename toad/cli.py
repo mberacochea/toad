@@ -1,16 +1,20 @@
 import importlib.util
 import subprocess
+from enum import Enum
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
 
 import typer
 from jinja2 import Template as Jinja2Template
-from toad.models import Entry, Task, TaskStatus, Template
-from sqlmodel import Session, SQLModel, create_engine, select
-from sqlmodel.engine.result import ScalarResult
+from rich.console import Console
+from rich.table import Table
 from sqlalchemy.future.engine import Engine
+from sqlmodel import Session, SQLModel, create_engine, func, select
+from sqlmodel.engine.result import ScalarResult
 from typing_extensions import Annotated
+
+from toad.models import Entry, Task, TaskStatus, Template
 
 app = typer.Typer()
 
@@ -131,16 +135,32 @@ def check(
             session.commit()
 
 
-def add_entries():
-    pass
+class SummaryType(str, Enum):
+    table = "table"
+    tsv = "tsv"
 
 
-def remove_entries():
-    pass
+@app.command(help="Get a summary of the number of tasks per status")
+def summary(database: str, format: SummaryType = SummaryType.table):
+    """Get a summary of the number of tasks per status"""
+    engine = create_database(database)
+    with Session(engine) as session:
+        query = select(Task.status, func.count()).group_by(Task.status)
+        result = session.exec(query).fetchall()
 
+        table = Table(title="Task Status")
 
-def update_entries():
-    pass
+        table.add_column("Status", justify="center")
+        table.add_column("Count", justify="left")
+
+        if format == SummaryType.table:
+            console = Console()
+            for status, count in result:
+                table.add_row(str(status), str(count))
+            console.print(table)
+        else:
+            for status, count in result:
+                print(f"{status}\t{count}")
 
 
 def empty_list() -> list:
