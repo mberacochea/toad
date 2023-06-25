@@ -1,0 +1,21 @@
+mkdir -p /hps/nobackup/rdf/metagenomics/service-team/projects/motus_aws_2023/nf_workdirs/{{ entry.name }} > /dev/null && \
+bsub -n 2 -M 8G \
+-J motus_{{ entry.name }} \
+-o /hps/nobackup/rdf/metagenomics/service-team/projects/motus_aws_2023/logs/SRP110813/motus_{{ entry.name }}.out \
+-e /hps/nobackup/rdf/metagenomics/service-team/projects/motus_aws_2023/logs/SRP110813/motus_{{ entry.name }}.error \
+-cwd /hps/nobackup/rdf/metagenomics/service-team/projects/motus_aws_2023/nf_workdirs/{{ entry.name }} \
+NXF_TEMP="/hps/scratch/rdf/metagenomics/nf-scratch" \
+TMPDIR="/hps/scratch/rdf/metagenomics/nf-scratch" \
+NXF_ANSI_LOG=false \
+/hps/software/users/rdf/metagenomics/service-team/software/nextflow/nextflow-21.10.0/nextflow run \
+/homes/mbc/.nextflow/assets/EBI-Metagenomics/motus_pipeline/main.nf \
+-profile aws -dsl2 -bucket-dir s3://mgnify-nf/nextflow_env \
+-with-report /hps/nobackup/rdf/metagenomics/service-team/projects/motus_aws_2023/nf_reports/SRP110813/{{ entry.name }}.html \
+-with-trace /hps/nobackup/rdf/metagenomics/service-team/projects/motus_aws_2023/nf_reports/SRP110813/{{ entry.name }}.txt \
+-work-dir s3://mgnify-nf/workdirs/{{ entry.name }} \
+-resume \
+--mode paired \
+--paired_end_forward /hps/nobackup/rdf/metagenomics/service-team/projects/motus_aws_2023/raw/SRP110813/raw/{{ entry.name }}_1.fastq.gz \
+--paired_end_reverse /hps/nobackup/rdf/metagenomics/service-team/projects/motus_aws_2023/raw/SRP110813/raw/{{ entry.name }}_2.fastq.gz \
+--sample_name {{ entry.name }} \
+--outdir /hps/nobackup/rdf/metagenomics/service-team/projects/motus_aws_2023/outputs/SRP110813/{{ entry.name }}
