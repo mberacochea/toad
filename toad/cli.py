@@ -1,7 +1,7 @@
 import time
 from enum import Enum
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Optional
 
 import typer
 from rich.console import Console
@@ -16,6 +16,13 @@ from toad.models import Entry, Task, TaskStatus, Template
 
 app = typer.Typer()
 
+
+__version__ = "0.1.0"
+
+def version_callback(value: bool):
+    if value:
+        print(f"Toad Version: {__version__}")
+        raise typer.Exit()
 
 def create_database(db: str) -> Engine:
     """
@@ -34,6 +41,7 @@ def create_database(db: str) -> Engine:
 
 @app.command()
 def update_template(database: str, template: str):
+    """Update any given template, the template file name is going to be used to identify it"""
     engine = create_database(database)
     with Session(engine) as session:
         with open(template, "r") as tfile:
@@ -51,6 +59,7 @@ def update_template(database: str, template: str):
 
 @app.command()
 def run(database: str, batch_size: int = 10):
+    """Run a batch of tasks"""
     engine = create_database(database)
     with Session(engine) as session:
         tasks: ScalarResult[Task] = session.exec(
@@ -69,6 +78,7 @@ def check(
         str, typer.Option(help="Python script to check if tasks were completed.")
     ],
 ):
+    """Run the check script on the running tasks."""
     engine = create_database(database)
     check_method: Callable = import_script(check_script, method_name="check")
 
@@ -102,7 +112,12 @@ class SummaryType(str, Enum):
 
 
 @app.command(help="Get a summary of the number of tasks per status")
-def summary(database: str, format: SummaryType = SummaryType.table):
+def summary(
+    database: str,
+    format: Annotated[
+        SummaryType, typer.Option(help="Fancy or good'ol tsv.")
+    ] = SummaryType.table,
+):
     """Get a summary of the number of tasks per status"""
     engine = create_database(database)
     with Session(engine) as session:
@@ -126,11 +141,21 @@ def summary(database: str, format: SummaryType = SummaryType.table):
 
 @app.command(
     help=(
-        "Run continuously, checking running jobs "
+        "Run continuously, checking running tasks "
         "and triggering new ones until there are no more pending tasks."
     )
 )
-def daemon(database: str, max_jobs: int, check_script: str, minutes: int = 30):
+def daemon(database: str,
+    check_script: Annotated[
+        str, typer.Option("--check", "-c", help="The check script path.")
+    ],
+    max_tasks: Annotated[
+        int, typer.Option("--max-tasks", "-m", help="Max number of 'running' tasks.")
+    ] = 25,
+    frequency: Annotated[
+        int, typer.Option("--frequency", "-f", help="Check frequency in minutes.")
+    ] = 30
+    ):
     engine = create_database(database)
     while True:
         print("Starting.")
@@ -152,7 +177,7 @@ def daemon(database: str, max_jobs: int, check_script: str, minutes: int = 30):
             print(f"There are {running_count} tasks running.")
 
             # Calculate the number of available slots for new jobs
-            available_slots = max_jobs - running_count
+            available_slots = max_tasks - running_count
 
             if available_slots > 0:
                 print(f"There is room for {available_slots} more.")
@@ -166,7 +191,7 @@ def daemon(database: str, max_jobs: int, check_script: str, minutes: int = 30):
                 for pending_task in pending_tasks:
                     pending_task.run()
                     session.add(pending_task)
-                    print(f"Task for {pending_task.entry.name} running.")
+                    print(f"Task {pending_task.id}:{pending_task.entry.name} running.")
                 session.commit()
 
                 # Get the count of remaining pending tasks
@@ -184,7 +209,7 @@ def daemon(database: str, max_jobs: int, check_script: str, minutes: int = 30):
                     print("No more tasks to run.")
                     break
 
-        time.sleep(60 * minutes)  # Sleep for {minutes}
+        time.sleep(60 * frequency)  # Sleep for {frequency} minutes
 
 
 def empty_list() -> list:
@@ -232,6 +257,16 @@ def init(
             task = Task(entry_id=db_entry.id, template_id=db_template.id)
             session.add(task)
             session.commit()
+
+@app.callback()
+def common(
+    ctx: typer.Context,
+    version: Annotated[
+        Optional[bool],
+        typer.Option("--version", callback=version_callback, is_eager=True),
+    ] = None,
+):
+    raise typer.Exit()
 
 
 if __name__ == "__main__":

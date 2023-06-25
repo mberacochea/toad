@@ -11,6 +11,10 @@ A very simple task booking system. It's just sql, jinja2 and python.
 
 You can download a binary, generated with [pyinstaller](https://pyinstaller.org/) from the releases tab.
 
+## Toad cli commands
+
+![The tool provides several sub-commands](docs/img/toad_cli.png)
+
 ## Usage
 
 The first step is to create a database and populate it with the `entries`.
