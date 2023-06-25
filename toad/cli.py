@@ -266,7 +266,7 @@ def common(
         typer.Option("--version", callback=version_callback, is_eager=True),
     ] = None,
 ):
-    raise typer.Exit()
+    pass
 
 
 if __name__ == "__main__":
