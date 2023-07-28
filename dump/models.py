@@ -1,12 +1,8 @@
-import subprocess
 from datetime import datetime
 from enum import Enum
 from typing import Optional
-import os
 
 from sqlmodel import Field, Relationship, SQLModel
-
-FTP_PATH = "/nfs/ftp/public/databases/metagenomics/temp/protein-db-dump-files"
 
 
 class TimeStampedMixin(SQLModel):
@@ -18,13 +14,8 @@ class Assembly(TimeStampedMixin, table=True):
     accession: str = Field(primary_key=True)
     files: list["File"] = Relationship(back_populates="assembly")
 
-    @property
-    def dest_folder(self):
-        return f"{FTP_PATH}/{self.accession[:6]}/{self.accession}_data"
-
-    @property
-    def tarball_path(self):
-        return f"{FTP_PATH}/{self.accession[:6]}/{self.accession}"
+    def dest_folder(self, output_folder):
+        return f"{output_folder}/{self.accession[:6]}/{self.accession}"
 
     @property
     def highest_pipeline_files(self):
@@ -32,34 +23,8 @@ class Assembly(TimeStampedMixin, table=True):
         largest_pipeline_version = sorted(pipelines, reverse=True)[0]
         return [f for f in self.files if f.pipeline_version == largest_pipeline_version]
 
-    @property
-    def ready(self):
-        total = len(self.files)
-        pending = sum(map(lambda x: x.status == CopyStatus.PENDING, self.files))
-        completed = sum(map(lambda x: x.status == CopyStatus.COMPLETED, self.files))
-        missing = sum(map(lambda x: x.status == CopyStatus.MISSING, self.files))
-        error = sum(map(lambda x: x.status == CopyStatus.ERROR, self.files))
-
-        if completed == total:
-            print("Done")
-            return True
-        if missing == total or error == total:
-            print(f"Assembly {self.accession} completly failed.")
-            return False
-        if pending:
-            print("Files copy pending.")
-            return False
-        if missing:
-            print("Missing files.")
-            return False
-        if error:
-            print("Some failed")
-            return False
-        print("WUT?")
-        return False
-
-    def dump_metadata(self):
-        pass
+    def files_for_pipeline_version(self, pipeline_version):
+        return [f for f in self.files if f.pipeline_version == pipeline_version]
 
 
 class CopyStatus(str, Enum):
@@ -82,33 +47,7 @@ class File(TimeStampedMixin, table=True):
     file_alias: str = Field(nullable=False)
     file_description: str = Field(nullable=False)
     pipeline_version: float = Field(nullable=False)
-
-    status: CopyStatus = Field(default=CopyStatus.PENDING, nullable=False)
-
-    copy_exitcode: int = Field(nullable=True)
-    copy_stdout: str = Field(nullable=True)
-    copy_stderr: str = Field(nullable=True)
-
-    def copy(self):
-        dest_file = f"{self.assembly.dest_folder}/{self.file_alias}"
-        print(f"cp {self.file_path} {dest_file}")
-        if not os.path.exists(self.file_path):
-            self.status = CopyStatus.MISSING
-        else:
-            print(f"cp {self.file_path} {dest_file}")
-            run_return = subprocess.run(
-                f"cp {self.file_path} {dest_file}",
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-            if run_return.returncode == 0:
-                self.status = CopyStatus.COMPLETED
-            else:
-                self.status = CopyStatus.ERROR
-            self.copy_exitcode = run_return.returncode
-            self.copy_stdout = run_return.stdout
-            self.copy_stderr = run_return.stderr
-            print(f"{self.status}")
-        return self
+    job_is_private: bool = Field(nullable=False)
+    sample_is_private: bool = Field(nullable=False)
+    study_is_private: bool = Field(nullable=False)
+    assembly_is_private: bool = Field(nullable=False)

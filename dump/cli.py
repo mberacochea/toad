@@ -1,22 +1,19 @@
 from typing import Optional
 import csv
-import os
-import shutil
 import json
+import os
 
 import typer
 from sqlalchemy.future.engine import Engine
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 from typing_extensions import Annotated
 
 from rich.progress import track
 
-from dump.models import Assembly, CopyStatus, File
+from dump.models import Assembly, File
 
 app = typer.Typer()
 
-
-FTP_PATH = "/nfs/ftp/public/databases/metagenomics/temp/protein-db-dump-files"
 
 __version__ = "0.1.0"
 
@@ -33,50 +30,63 @@ def create_database(db: str) -> Engine:
     return engine
 
 
-@app.command(help=("Copy the files for an assembly."))
-def copy(database: str, assembly_accession: str):
+@app.command(help=("Dump all the assemblies in the db."))
+def dump_all(database: str, output_folder: str):
+    engine = create_database(database)
+    with Session(engine) as session:
+        assemblies = session.exec(select(Assembly))
+        for assembly in track(
+            assemblies, description="Exporting the assemblies json files"
+        ):
+            dump_json(database, assembly.accession, output_folder)
+
+
+@app.command(help=("Dump the assembly json files."))
+def dump_json(database: str, assembly_accession: str, output_folder: str):
     engine = create_database(database)
     with Session(engine) as session:
         assembly = session.get(Assembly, assembly_accession)
 
-        if assembly.ready:
-            print(f"Assembly {assembly.accession} done")
-            return
-
-        if not os.path.exists(assembly.dest_folder):
-            os.makedirs(assembly.dest_folder)
-
-        pending_files = [
-            f for f in assembly.highest_pipeline_files if f.status == CopyStatus.PENDING
-        ]
-
-        for file_ in pending_files:
-            file_.copy()
-            session.add(file_)
-            session.commit()
-
-        session.refresh(assembly)
+        if assembly is None:
+            raise Exception(f"Assembly {assembly_accession} not found")
 
         # JSON with the description of the files #
-        mgya = assembly.highest_pipeline_files[0].mgya
-        pipeline_version = assembly.highest_pipeline_files[0].pipeline_version
-        json_content = {
-            "z": mgya,
-            "pipeline_version": pipeline_version,
-            "files": [],
-        }
-        for file_ in assembly.highest_pipeline_files:
-            json_content["files"].append({
-                "file": file_.file_alias,
-                "description": file_.file_description,
-                "copied": file_.status == CopyStatus.COMPLETED,
-            })
+        pipelines = set(f.pipeline_version for f in assembly.files)
 
-        with open(f"{assembly.dest_folder}/metadata.json", "w", encoding="utf-8") as f:
-            json.dump(json_content, f, indent=4)
+        for pipeline_version in pipelines:
+            files_for_pipeline: File = assembly.files_for_pipeline_version(
+                pipeline_version
+            )
 
-        shutil.make_archive(assembly.tarball_path, "gztar", assembly.dest_folder)
-        shutil.rmtree(assembly.dest_folder)
+            is_private = all(
+                [
+                    f.job_is_private
+                    or f.sample_is_private
+                    or f.study_is_private
+                    or f.assembly_is_private
+                    for f in files_for_pipeline
+                ]
+            )
+
+            json_content = {
+                "assembly": assembly.accession,
+                "pipeline_version": pipeline_version,
+                "is_private": is_private,
+                "files": [],
+            }
+
+            for file_ in files_for_pipeline:
+                json_content["files"].append(
+                    {
+                        "file_path": file_.file_path,
+                        "description": file_.file_description,
+                    }
+                )
+            output = f"{assembly.dest_folder(output_folder)}"
+            os.makedirs(output, exist_ok=True)
+            ouput_json = f"{output}/{assembly.accession}_{pipeline_version}.json"
+            with open(ouput_json, "w", encoding="utf-8") as f:
+                json.dump(json_content, f, indent=4)
 
 
 @app.command(help="Add entries to the, template and entries.")
@@ -111,6 +121,10 @@ def init(
                         file_alias=assembly_file_row[3],
                         file_description=assembly_file_row[4],
                         pipeline_version=float(assembly_file_row[5]),
+                        job_is_private=row[6] == "1",
+                        sample_is_private=row[7] == "1",
+                        study_is_private=row[8] == "1",
+                        assembly_is_private=row[9] == "1",
                     )
                     session.add(file_)
                 session.commit()
