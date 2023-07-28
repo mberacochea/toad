@@ -2,6 +2,7 @@ from typing import Optional
 import csv
 import os
 import shutil
+import json
 
 import typer
 from sqlalchemy.future.engine import Engine
@@ -45,7 +46,9 @@ def copy(database: str, assembly_accession: str):
         if not os.path.exists(assembly.dest_folder):
             os.makedirs(assembly.dest_folder)
 
-        pending_files = [f for f in assembly.files if f.status == CopyStatus.PENDING]
+        pending_files = [
+            f for f in assembly.highest_pipeline_files if f.status == CopyStatus.PENDING
+        ]
 
         for file_ in pending_files:
             file_.copy()
@@ -53,6 +56,24 @@ def copy(database: str, assembly_accession: str):
             session.commit()
 
         session.refresh(assembly)
+
+        # JSON with the description of the files #
+        mgya = assembly.highest_pipeline_files[0].mgya
+        pipeline_version = assembly.highest_pipeline_files[0].pipeline_version
+        json_content = {
+            "z": mgya,
+            "pipeline_version": pipeline_version,
+            "files": [],
+        }
+        for file_ in assembly.highest_pipeline_files:
+            json_content["files"].append({
+                "file": file_.file_alias,
+                "description": file_.file_description,
+                "copied": file_.status == CopyStatus.COMPLETED,
+            })
+
+        with open(f"{assembly.dest_folder}/metadata.json", "w", encoding="utf-8") as f:
+            json.dump(json_content, f, indent=4)
 
         shutil.make_archive(assembly.tarball_path, "gztar", assembly.dest_folder)
         shutil.rmtree(assembly.dest_folder)

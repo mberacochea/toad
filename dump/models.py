@@ -27,6 +27,12 @@ class Assembly(TimeStampedMixin, table=True):
         return f"{FTP_PATH}/{self.accession[:6]}/{self.accession}"
 
     @property
+    def highest_pipeline_files(self):
+        pipelines = set(f.pipeline_version for f in self.files)
+        largest_pipeline_version = sorted(pipelines, reverse=True)[0]
+        return [f for f in self.files if f.pipeline_version == largest_pipeline_version]
+
+    @property
     def ready(self):
         total = len(self.files)
         pending = sum(map(lambda x: x.status == CopyStatus.PENDING, self.files))
