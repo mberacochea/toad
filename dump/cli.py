@@ -101,7 +101,6 @@ def init(
     with Session(engine) as session:
         with open(files_csv, "r") as files_csv_handler:
             csv_reader = csv.reader(files_csv_handler)
-            next(csv_reader)
             assembly_files = {}
             for row in csv_reader:
                 assembly_files.setdefault(row[1], []).append(row)
@@ -121,10 +120,10 @@ def init(
                         file_alias=assembly_file_row[3],
                         file_description=assembly_file_row[4],
                         pipeline_version=float(assembly_file_row[5]),
-                        job_is_private=row[6] == "1",
-                        sample_is_private=row[7] == "1",
-                        study_is_private=row[8] == "1",
-                        assembly_is_private=row[9] == "1",
+                        job_is_private=assembly_file_row[6] == "1",
+                        sample_is_private=assembly_file_row[7] == "1",
+                        study_is_private=assembly_file_row[8] == "1",
+                        assembly_is_private=assembly_file_row[9] == "1",
                     )
                     session.add(file_)
                 session.commit()
