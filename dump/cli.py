@@ -36,11 +36,8 @@ def create_database(db: str) -> Engine:
 
 
 def copy_assembly(assembly: Assembly, session: Session):
-    if assembly.ready:
-        print(f"Assembly {assembly.accession} completed")
-        assembly.status = CopyStatus.COMPLETED
-        session.add(assembly)
-        session.commit()
+    if assembly.status == CopyStatus.COMPLETED:
+        print(f"Assembly {assembly} completed.. ignoring")
         return
 
     if not os.path.exists(assembly.dest_folder):
@@ -88,10 +85,17 @@ def copy_all(database: str):
         assemblies: ScalarResult[Assembly] = session.exec(
             select(Assembly).where(Assembly.status == CopyStatus.PENDING)
         )
-        for assembly in track(assemblies, description="Copying..."):
+        for assembly in assemblies:
             try:
                 print(f"Copying assembly {assembly.accession}")
-                copy_assembly(assembly)
+                copy_assembly(assembly, session)
+                session.refresh(assembly)
+                if assembly.ready:
+                    print(f"Assembly {assembly.accession} completed")
+                    assembly.status = CopyStatus.COMPLETED
+                    session.add(assembly)
+                    session.commit()
+
             except Exception as ex:
                 print(ex, file=sys.stderr)
                 assembly.status = CopyStatus.ERROR
