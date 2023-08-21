@@ -14,9 +14,19 @@ class TimeStampedMixin(SQLModel):
     updated_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
 
 
+class CopyStatus(str, Enum):
+    """COPY Status"""
+
+    PENDING = "pending"
+    MISSING = "file_missing"
+    COMPLETED = "completed"
+    ERROR = "error"
+
+
 class Assembly(TimeStampedMixin, table=True):
     accession: str = Field(primary_key=True)
     files: list["File"] = Relationship(back_populates="assembly")
+    status: CopyStatus = Field(default=CopyStatus.PENDING, nullable=False)
 
     @property
     def dest_folder(self):
@@ -53,22 +63,9 @@ class Assembly(TimeStampedMixin, table=True):
             print("Missing files.")
             return False
         if error:
-            print("Some failed")
+            print("Copy failed for some files")
             return False
-        print("WUT?")
         return False
-
-    def dump_metadata(self):
-        pass
-
-
-class CopyStatus(str, Enum):
-    """COPY Status"""
-
-    PENDING = "pending"
-    MISSING = "file_missing"
-    COMPLETED = "completed"
-    ERROR = "error"
 
 
 class File(TimeStampedMixin, table=True):
