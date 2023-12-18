@@ -24,7 +24,7 @@ jobs:
         pyinstaller mjobs/main.py --onefile --clean --name toad
 
     - name: Publish artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: toad
         path: dist/toad
